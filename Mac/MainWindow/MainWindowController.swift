@@ -26,6 +26,9 @@ final class MainWindowController: NSWindowController, NSUserInterfaceValidations
 
 	private var isShowingExtractedArticle = false
 	private var isShowingTranslatedArticle = false
+	private var isShowingSummary = false
+	private var isTranslating = false
+	private var isSummarizing = false
 	private var translatedArticleHTML: String?
 	private var articleExtractor: ArticleExtractor?
 	private var sharingServicePickerDelegate: NSSharingServicePickerDelegate?
@@ -277,6 +280,10 @@ final class MainWindowController: NSWindowController, NSUserInterfaceValidations
 
 		if item.action == #selector(translateArticle(_:)) {
 			return validateTranslateArticle(item)
+		}
+
+		if item.action == #selector(summarizeArticle(_:)) {
+			return validateSummarizeArticle(item)
 		}
 
 		if item.action == #selector(toggleReadFeedsFilter(_:)) {
@@ -549,8 +556,41 @@ final class MainWindowController: NSWindowController, NSUserInterfaceValidations
 		timelineContainerViewController?.cleanUp()
 	}
 
+	@IBAction func summarizeArticle(_ sender: Any?) {
+		guard !isSummarizing, let article = oneSelectedArticle else {
+			return
+		}
+
+		if isShowingSummary {
+			isShowingSummary = false
+			if isShowingTranslatedArticle, let translatedHTML = AITranslationService.shared.cachedTranslation(for: article.articleID) {
+				detailViewController?.showTranslatedHTML(translatedHTML, for: article, mode: timelineSourceMode)
+			} else {
+				detailViewController?.setState(DetailState.article(article, nil), mode: timelineSourceMode)
+			}
+			makeToolbarValidate()
+			return
+		}
+
+		let cachedTranslation = AITranslationService.shared.cachedTranslation(for: article.articleID)
+
+		if let cached = AITranslationService.shared.cachedSummary(for: article.articleID) {
+			isShowingSummary = true
+			detailViewController?.showSummaryHTML(cached, translatedHTML: isShowingTranslatedArticle ? cachedTranslation : nil, for: article, mode: timelineSourceMode)
+			makeToolbarValidate()
+			return
+		}
+
+		guard AITranslationService.shared.hasAPIKey else {
+			showAPIKeySettingsWindow()
+			return
+		}
+
+		performSummary(for: article)
+	}
+
 	@IBAction func translateArticle(_ sender: Any?) {
-		guard let article = oneSelectedArticle else {
+		guard !isTranslating, let article = oneSelectedArticle else {
 			return
 		}
 
@@ -661,6 +701,9 @@ extension MainWindowController: TimelineContainerViewControllerDelegate {
 		articleExtractor = nil
 		isShowingExtractedArticle = false
 		isShowingTranslatedArticle = false
+		isShowingSummary = false
+		isTranslating = false
+		isSummarizing = false
 		makeToolbarValidate()
 
 		let detailState: DetailState
@@ -821,6 +864,7 @@ extension NSToolbarItem.Identifier {
 	static let articleThemeMenu = NSToolbarItem.Identifier("articleThemeMenu")
 	static let cleanUp = NSToolbarItem.Identifier("cleanUp")
 	static let translateArticle = NSToolbarItem.Identifier("translateArticle")
+	static let summarizeArticle = NSToolbarItem.Identifier("summarizeArticle")
 }
 
 extension MainWindowController: NSToolbarDelegate {
@@ -906,6 +950,10 @@ extension MainWindowController: NSToolbarDelegate {
 			let title = NSLocalizedString("Translate", comment: "Translate")
 			return buildToolbarButton(.translateArticle, title, Assets.Images.translate, "translateArticle:")
 
+		case .summarizeArticle:
+			let title = NSLocalizedString("Summarize", comment: "Summarize")
+			return buildToolbarButton(.summarizeArticle, title, Assets.Images.summarize, "summarizeArticle:")
+
 		default:
 			break
 		}
@@ -932,7 +980,8 @@ extension MainWindowController: NSToolbarDelegate {
 			.articleThemeMenu,
 			.search,
 			.cleanUp,
-			.translateArticle
+			.translateArticle,
+			.summarizeArticle
 		]
 	}
 
@@ -953,6 +1002,7 @@ extension MainWindowController: NSToolbarDelegate {
 			.share,
 			.openInBrowser,
 			.translateArticle,
+			.summarizeArticle,
 			.flexibleSpace,
 			.search
 		]
@@ -1317,15 +1367,41 @@ private extension MainWindowController {
 		return true
 	}
 
+	func validateSummarizeArticle(_ item: NSValidatedUserInterfaceItem) -> Bool {
+		guard oneSelectedArticle != nil else {
+			return false
+		}
+
+		if let toolbarItem = item as? NSToolbarItem {
+			if isSummarizing {
+				toolbarItem.toolTip = NSLocalizedString("Summarizing…", comment: "Summarizing…")
+				showSpinner(on: toolbarItem)
+			} else {
+				hideSpinner(on: toolbarItem, image: Assets.Images.summarize)
+				toolbarItem.toolTip = isShowingSummary ?
+					NSLocalizedString("Hide Summary", comment: "Hide Summary") :
+					NSLocalizedString("Summarize", comment: "Summarize")
+			}
+		}
+
+		return true
+	}
+
 	func validateTranslateArticle(_ item: NSValidatedUserInterfaceItem) -> Bool {
 		guard oneSelectedArticle != nil else {
 			return false
 		}
 
 		if let toolbarItem = item as? NSToolbarItem {
-			toolbarItem.toolTip = isShowingTranslatedArticle ?
-				NSLocalizedString("Show Original", comment: "Show Original") :
-				NSLocalizedString("Translate", comment: "Translate")
+			if isTranslating {
+				toolbarItem.toolTip = NSLocalizedString("Translating…", comment: "Translating…")
+				showSpinner(on: toolbarItem)
+			} else {
+				hideSpinner(on: toolbarItem, image: Assets.Images.translate)
+				toolbarItem.toolTip = isShowingTranslatedArticle ?
+					NSLocalizedString("Show Original", comment: "Show Original") :
+					NSLocalizedString("Translate", comment: "Translate")
+			}
 		}
 
 		return true
@@ -1336,9 +1412,14 @@ private extension MainWindowController {
 			return
 		}
 
-		detailViewController?.setState(.loading, mode: timelineSourceMode)
+		isTranslating = true
+		makeToolbarValidate()
 
 		Task { @MainActor in
+			defer {
+				isTranslating = false
+				makeToolbarValidate()
+			}
 			do {
 				let translatedHTML = try await AITranslationService.shared.translate(articleID: article.articleID, html: body)
 				guard oneSelectedArticle?.articleID == article.articleID else {
@@ -1355,6 +1436,47 @@ private extension MainWindowController {
 
 				let alert = NSAlert()
 				alert.messageText = NSLocalizedString("Translation Failed", comment: "Translation Failed")
+				alert.informativeText = error.localizedDescription
+				alert.alertStyle = .warning
+				alert.addButton(withTitle: NSLocalizedString("OK", comment: "OK"))
+				if let window {
+					_ = await alert.beginSheetModal(for: window)
+				}
+			}
+		}
+	}
+
+	func performSummary(for article: Article) {
+		guard let body = article.body, !body.isEmpty else {
+			return
+		}
+
+		let cachedTranslation = isShowingTranslatedArticle ? AITranslationService.shared.cachedTranslation(for: article.articleID) : nil
+
+		isSummarizing = true
+		makeToolbarValidate()
+
+		Task { @MainActor in
+			defer {
+				isSummarizing = false
+				makeToolbarValidate()
+			}
+			do {
+				let summaryHTML = try await AITranslationService.shared.summarize(articleID: article.articleID, html: body)
+				guard oneSelectedArticle?.articleID == article.articleID else {
+					return
+				}
+				isShowingSummary = true
+				detailViewController?.showSummaryHTML(summaryHTML, translatedHTML: cachedTranslation, for: article, mode: timelineSourceMode)
+				makeToolbarValidate()
+			} catch {
+				guard oneSelectedArticle?.articleID == article.articleID else {
+					return
+				}
+				detailViewController?.setState(DetailState.article(article, nil), mode: timelineSourceMode)
+
+				let alert = NSAlert()
+				alert.messageText = NSLocalizedString("Summary Failed", comment: "Summary Failed")
 				alert.informativeText = error.localizedDescription
 				alert.alertStyle = .warning
 				alert.addButton(withTitle: NSLocalizedString("OK", comment: "OK"))
@@ -1503,6 +1625,38 @@ private extension MainWindowController {
 
 		if !(sidebarSplitViewItem?.isCollapsed ?? false) && isSidebarHidden {
 			sidebarSplitViewItem?.isCollapsed = true
+		}
+	}
+
+	private static let spinnerIdentifier = NSUserInterfaceItemIdentifier("aiSpinner")
+
+	func showSpinner(on toolbarItem: NSToolbarItem) {
+		guard let button = toolbarItem.view as? NSButton else { return }
+		if button.subviews.contains(where: { $0.identifier == Self.spinnerIdentifier }) { return }
+
+		button.image = nil
+
+		let spinner = NSProgressIndicator()
+		spinner.identifier = Self.spinnerIdentifier
+		spinner.style = .spinning
+		spinner.controlSize = .small
+		spinner.isIndeterminate = true
+		spinner.translatesAutoresizingMaskIntoConstraints = false
+		button.addSubview(spinner)
+		NSLayoutConstraint.activate([
+			spinner.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+			spinner.centerYAnchor.constraint(equalTo: button.centerYAnchor)
+		])
+		spinner.startAnimation(nil)
+	}
+
+	func hideSpinner(on toolbarItem: NSToolbarItem, image: NSImage) {
+		guard let button = toolbarItem.view as? NSButton else { return }
+		if let spinner = button.subviews.first(where: { $0.identifier == Self.spinnerIdentifier }) {
+			spinner.removeFromSuperview()
+		}
+		if button.image == nil {
+			button.image = image
 		}
 	}
 

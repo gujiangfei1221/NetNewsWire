@@ -181,6 +181,45 @@ final class DetailWebViewController: NSViewController {
 		webView.loadHTMLString(html, baseURL: URL(string: rendering.baseURL))
 	}
 
+	// MARK: Summary
+
+	func showSummaryHTML(_ summaryHTML: String, translatedHTML: String? = nil, for article: Article) {
+		delegate?.mouseDidExit(self)
+		detailIconSchemeHandler.currentArticle = article
+
+		let theme = ArticleThemesManager.shared.currentTheme
+		let rendering = ArticleRenderer.articleHTML(article: article, theme: theme)
+
+		var bodyParts = rendering.html
+
+		if let translatedHTML {
+			bodyParts += """
+			\n<div style="margin: 2em 0; border-top: 2px solid #007AFF; padding-top: 1.5em;">
+				<div style="display: inline-block; background: #007AFF; color: white; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 4px; margin-bottom: 1em;">中文翻译</div>
+			</div>
+			\(translatedHTML)
+			"""
+		}
+
+		bodyParts += """
+		\n<div style="margin: 2em 0; border-top: 2px solid #34C759; padding-top: 1.5em;">
+			<div style="display: inline-block; background: #34C759; color: white; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 4px; margin-bottom: 1em;">AI 总结</div>
+		</div>
+		\(summaryHTML)
+		"""
+
+		let substitutions = [
+			"title": rendering.title,
+			"baseURL": rendering.baseURL,
+			"style": rendering.style,
+			"body": bodyParts
+		]
+
+		var html = try! MacroProcessor.renderedText(withTemplate: ArticleRenderer.page.html, substitutions: substitutions)
+		html = ArticleRenderingSpecialCases.filterHTMLIfNeeded(baseURL: rendering.baseURL, html: html)
+		webView.loadHTMLString(html, baseURL: URL(string: rendering.baseURL))
+	}
+
 	// MARK: Scrolling
 
 	func canScrollDown() async -> Bool {
