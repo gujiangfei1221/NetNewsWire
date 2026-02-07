@@ -152,6 +152,35 @@ final class DetailWebViewController: NSViewController {
 		webView.evaluateJavaScript("stopMediaPlayback();")
 	}
 
+	// MARK: Translation
+
+	func showTranslatedHTML(_ translatedHTML: String, for article: Article) {
+		delegate?.mouseDidExit(self)
+		detailIconSchemeHandler.currentArticle = article
+
+		let theme = ArticleThemesManager.shared.currentTheme
+		let rendering = ArticleRenderer.articleHTML(article: article, theme: theme)
+
+		let combinedBody = """
+		\(rendering.html)
+		<div style="margin: 2em 0; border-top: 2px solid #007AFF; padding-top: 1.5em;">
+			<div style="display: inline-block; background: #007AFF; color: white; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 4px; margin-bottom: 1em;">中文翻译</div>
+		</div>
+		\(translatedHTML)
+		"""
+
+		let substitutions = [
+			"title": rendering.title,
+			"baseURL": rendering.baseURL,
+			"style": rendering.style,
+			"body": combinedBody
+		]
+
+		var html = try! MacroProcessor.renderedText(withTemplate: ArticleRenderer.page.html, substitutions: substitutions)
+		html = ArticleRenderingSpecialCases.filterHTMLIfNeeded(baseURL: rendering.baseURL, html: html)
+		webView.loadHTMLString(html, baseURL: URL(string: rendering.baseURL))
+	}
+
 	// MARK: Scrolling
 
 	func canScrollDown() async -> Bool {

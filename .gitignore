@@ -77,5 +77,8 @@ fastlane/test_output
 /Secrets/Sources/Secrets/SecretKey.swift
 /Modules/Secrets/Sources/Secrets/SecretKey.swift
 
-.claude/
+# Local developer code signing overrides (do not commit)
+/SharedXcodeSettings/DeveloperSettings.xcconfig
+/SharedXcodeSettings/DeveloperSettings.local.xcconfig
 
+.claude/

@@ -1,0 +1,8 @@
+CODE_SIGN_IDENTITY[sdk=macosx*] = Mac Developer
+CODE_SIGN_IDENTITY[sdk=iphoneos*] = iPhone Developer
+CODE_SIGN_IDENTITY[sdk=iphonesimulator*] = iPhone Developer
+DEVELOPMENT_TEAM =
+CODE_SIGN_STYLE = Automatic
+ORGANIZATION_IDENTIFIER =
+DEVELOPER_ENTITLEMENTS = -dev
+PROVISIONING_PROFILE_SPECIFIER =

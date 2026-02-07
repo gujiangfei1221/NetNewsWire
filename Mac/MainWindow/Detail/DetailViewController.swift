@@ -87,6 +87,11 @@ final class DetailViewController: NSViewController, WKUIDelegate {
 		currentSourceMode = mode
 	}
 
+	func showTranslatedHTML(_ translatedHTML: String, for article: Article, mode: TimelineSourceMode) {
+		let webViewController = webViewController(for: mode)
+		webViewController.showTranslatedHTML(translatedHTML, for: article)
+	}
+
 	func stopMediaPlayback() {
 		currentWebViewController.stopMediaPlayback()
 	}

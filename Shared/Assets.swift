@@ -58,6 +58,7 @@ struct Assets {
 		static var addNewSidebarItem: RSImage { RSImage(symbol: "plus")! }
 		static var articleTheme: RSImage { RSImage(symbol: "doc.richtext")! }
 		static var cleanUp: RSImage { RSImage(symbol: "bubbles.and.sparkles")! }
+		static var translate: RSImage { RSImage(symbol: "translate")! }
 		static var delete: RSImage { RSImage(symbol: "xmark.bin")! }
 		static var marsEdit: RSImage { RSImage(named: "MarsEditIcon")! }
 		static var microblog: RSImage { RSImage(named: "MicroblogIcon")! }

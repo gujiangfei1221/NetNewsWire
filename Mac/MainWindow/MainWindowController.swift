@@ -25,8 +25,11 @@ final class MainWindowController: NSWindowController, NSUserInterfaceValidations
     private var activityManager = ActivityManager()
 
 	private var isShowingExtractedArticle = false
+	private var isShowingTranslatedArticle = false
+	private var translatedArticleHTML: String?
 	private var articleExtractor: ArticleExtractor?
 	private var sharingServicePickerDelegate: NSSharingServicePickerDelegate?
+	private var aiTranslationKeyWindowController: AITranslationKeyWindowController?
 
 	private let windowAutosaveName = NSWindow.FrameAutosaveName("MainWindow")
 	private static let mainWindowWidthsStateKey = "mainWindowWidthsStateKey"
@@ -270,6 +273,10 @@ final class MainWindowController: NSWindowController, NSUserInterfaceValidations
 
 		if item.action == #selector(cleanUp(_:)) {
 			return validateCleanUp(item)
+		}
+
+		if item.action == #selector(translateArticle(_:)) {
+			return validateTranslateArticle(item)
 		}
 
 		if item.action == #selector(toggleReadFeedsFilter(_:)) {
@@ -542,6 +549,37 @@ final class MainWindowController: NSWindowController, NSUserInterfaceValidations
 		timelineContainerViewController?.cleanUp()
 	}
 
+	@IBAction func translateArticle(_ sender: Any?) {
+		guard let article = oneSelectedArticle else {
+			return
+		}
+
+		// If already showing translated article, toggle back to original
+		if isShowingTranslatedArticle {
+			isShowingTranslatedArticle = false
+			detailViewController?.setState(DetailState.article(article, nil), mode: timelineSourceMode)
+			makeToolbarValidate()
+			return
+		}
+
+		// Check if we have a cached translation
+		if let cached = AITranslationService.shared.cachedTranslation(for: article.articleID) {
+			isShowingTranslatedArticle = true
+			detailViewController?.showTranslatedHTML(cached, for: article, mode: timelineSourceMode)
+			makeToolbarValidate()
+			return
+		}
+
+		// Check API key
+		guard AITranslationService.shared.hasAPIKey else {
+			showAPIKeySettingsWindow()
+			return
+		}
+
+		// Start translation
+		performTranslation(for: article)
+	}
+
 	@IBAction func toggleReadFeedsFilter(_ sender: Any?) {
 		sidebarViewController?.toggleReadFilter()
 	}
@@ -622,6 +660,7 @@ extension MainWindowController: TimelineContainerViewControllerDelegate {
 		articleExtractor?.cancel()
 		articleExtractor = nil
 		isShowingExtractedArticle = false
+		isShowingTranslatedArticle = false
 		makeToolbarValidate()
 
 		let detailState: DetailState
@@ -781,6 +820,7 @@ extension NSToolbarItem.Identifier {
 	static let share = NSToolbarItem.Identifier("share")
 	static let articleThemeMenu = NSToolbarItem.Identifier("articleThemeMenu")
 	static let cleanUp = NSToolbarItem.Identifier("cleanUp")
+	static let translateArticle = NSToolbarItem.Identifier("translateArticle")
 }
 
 extension MainWindowController: NSToolbarDelegate {
@@ -862,6 +902,10 @@ extension MainWindowController: NSToolbarDelegate {
 			let title = NSLocalizedString("Clean Up", comment: "Clean Up")
 			return buildToolbarButton(.cleanUp, title, Assets.Images.cleanUp, "cleanUp:")
 
+		case .translateArticle:
+			let title = NSLocalizedString("Translate", comment: "Translate")
+			return buildToolbarButton(.translateArticle, title, Assets.Images.translate, "translateArticle:")
+
 		default:
 			break
 		}
@@ -887,7 +931,8 @@ extension MainWindowController: NSToolbarDelegate {
 			.share,
 			.articleThemeMenu,
 			.search,
-			.cleanUp
+			.cleanUp,
+			.translateArticle
 		]
 	}
 
@@ -907,6 +952,7 @@ extension MainWindowController: NSToolbarDelegate {
 			.readerView,
 			.share,
 			.openInBrowser,
+			.translateArticle,
 			.flexibleSpace,
 			.search
 		]
@@ -1269,6 +1315,70 @@ private extension MainWindowController {
 		}
 
 		return true
+	}
+
+	func validateTranslateArticle(_ item: NSValidatedUserInterfaceItem) -> Bool {
+		guard oneSelectedArticle != nil else {
+			return false
+		}
+
+		if let toolbarItem = item as? NSToolbarItem {
+			toolbarItem.toolTip = isShowingTranslatedArticle ?
+				NSLocalizedString("Show Original", comment: "Show Original") :
+				NSLocalizedString("Translate", comment: "Translate")
+		}
+
+		return true
+	}
+
+	func performTranslation(for article: Article) {
+		guard let body = article.body, !body.isEmpty else {
+			return
+		}
+
+		detailViewController?.setState(.loading, mode: timelineSourceMode)
+
+		Task { @MainActor in
+			do {
+				let translatedHTML = try await AITranslationService.shared.translate(articleID: article.articleID, html: body)
+				guard oneSelectedArticle?.articleID == article.articleID else {
+					return
+				}
+				isShowingTranslatedArticle = true
+				detailViewController?.showTranslatedHTML(translatedHTML, for: article, mode: timelineSourceMode)
+				makeToolbarValidate()
+			} catch {
+				guard oneSelectedArticle?.articleID == article.articleID else {
+					return
+				}
+				detailViewController?.setState(DetailState.article(article, nil), mode: timelineSourceMode)
+
+				let alert = NSAlert()
+				alert.messageText = NSLocalizedString("Translation Failed", comment: "Translation Failed")
+				alert.informativeText = error.localizedDescription
+				alert.alertStyle = .warning
+				alert.addButton(withTitle: NSLocalizedString("OK", comment: "OK"))
+				if let window {
+					_ = await alert.beginSheetModal(for: window)
+				}
+			}
+		}
+	}
+
+	func showAPIKeySettingsWindow() {
+		guard let window else {
+			return
+		}
+		if aiTranslationKeyWindowController == nil {
+			aiTranslationKeyWindowController = AITranslationKeyWindowController()
+		}
+		aiTranslationKeyWindowController?.showSheet(on: window) { [weak self] saved in
+			if saved {
+				if let article = self?.oneSelectedArticle {
+					self?.performTranslation(for: article)
+				}
+			}
+		}
 	}
 
 	// MARK: - Misc.
